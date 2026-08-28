@@ -27,6 +27,7 @@ load_dotenv()
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -52,7 +53,7 @@ async def lifespan(_: FastAPI):
     try:
         db.check_connection()
     except SQLAlchemyError as exc:
-        print( 
+        print(
             "\nCannot reach PostgreSQL.\n"
             "  1. Is it running?      docker compose up -d --wait\n"
             "  2. Is .env present?    cp .env.example .env\n"
@@ -70,6 +71,17 @@ app = FastAPI(
     version="0.2.0",
     description="Training project. PostgreSQL-backed.",
     lifespan=lifespan,
+)
+
+# Allows the React frontend to communicate with the API from another origin.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Gives every request a session and cleans it up afterwards. Added before the
