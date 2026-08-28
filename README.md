@@ -1,96 +1,197 @@
-# Cloud, Data & AI Workshops — AWS, Databricks Genie, AI Agents, LLMOps
+# Banking-app
 
-Hands-on workshop labs built by [BeCloudReady](https://becloudready.com/workshops) for engineering and analytics teams. Each lab is self-contained, with pre-scoped IAM permissions, step-by-step walkthroughs, and sample data included. Drop into a workshop or run independently.
+Training project: a banking backend API in Python + FastAPI, on PostgreSQL.
 
----
+**Scope for this phase: API + database + auth.** No frontend. Accounts, the
+transaction ledger and registered users live in Postgres and survive a restart.
+Schema changes land in `app/tables.py` and are picked up automatically on the
+next app start, so say so in the group before you change a table everyone
+shares.
 
-## Workshops
+The design rule across the app: **router (API) → service → core (rules +
+store) → repository → schema.** A router only translates HTTP in and out; a
+service holds the business logic; core rules are pure validation with no
+I/O; repositories are thin wrappers over the store; schemas are the Pydantic
+shapes that cross every boundary.
 
-| Workshop                                                                         | What you build                                                                                                                                                               | What you will be able to do                                                                                                                           | Stack                                                                        |
-| -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [`workshops/databricks-genie-ai-agents/`](workshops/databricks-genie-ai-agents/) | A governed conversational AI agent on Databricks AI/BI Genie: LLM fundamentals in SQL, Genie space, Knowledge Store curation, benchmarks                                     | Stand up a Genie agent your stakeholders can trust — curate it, benchmark it, and govern it with Unity Catalog. No Python required for the core track | Databricks, AI/BI Genie, Unity Catalog, SQL                                  |
-| [`workshops/aws-data-lake/`](workshops/aws-data-lake/)                           | End-to-end data lake: raw ingestion, ETL, governance, CDC, and analytics                                                                                                     | Design and operate the full AWS data engineering stack, from raw S3 files to a governed query layer in Athena and Redshift                            | S3, Glue, Athena, Lake Formation, Redshift, DMS, OpenSearch                  |
-| [`workshops/fullstack-aws/`](workshops/fullstack-aws/)                           | Full-stack app on AWS: React, FastAPI, MongoDB, Terraform, and CI/CD across 7 chapters and 4 deployable projects                                                             | Ship a production-ready app on AWS end-to-end, including infrastructure and automated deployment                                                      | React, FastAPI, Lambda, S3, DynamoDB, API Gateway, Terraform, GitHub Actions |
-| [`workshops/llmops/`](workshops/llmops/)                                         | Deploy, observe, and route production LLM workloads on a GPU instance: vLLM serving, Prometheus/Grafana dashboards, and LiteLLM gateway with virtual keys and spend tracking | Run LLM inference in-house with full observability and cost controls, without depending on managed APIs                                               | vLLM, LiteLLM, Prometheus, Grafana, DCGM, Docker, Ansible                    |
+**Where each slice stands:**
+- **Transfers**, **deposits/withdrawals** and **auth** are wired end to end
+  (router → service → repository → store) and are the reference to copy.
+- **Accounts** (`app/routers/accounts.py`) reads and writes `app.core.store`,
+  so an account created there is immediately visible to transfers and to
+  deposits/withdrawals. It still calls the store directly rather than going
+  through `app/services/account_service.py`, which exists but is not yet wired
+  to anything.
+- **Listing/filtering** (`queries.py`) and **statements** (`statements.py`)
+  are unclaimed; see the docstring in each file for the intended shape.
 
-### Databricks Genie & AI Agents: what's inside
+## Running it
 
-| Track                      | Content                                                                                                                                                                    |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Analyst track (SQL + UI)   | LLM fundamentals via `ai_query()`, build a Genie space, Knowledge Store curation (descriptions, synonyms, example SQL, instructions), benchmarks, Unity Catalog governance |
-| Engineer track (notebooks) | LLM API basics → structured output → tool use → agentic loop → MCP server — a from-scratch text-to-SQL agent showing what Genie abstracts away                             |
+You need Docker. On WSL/Ubuntu, `bash scripts/install-docker-wsl.sh` installs
+it; on macOS or plain Windows, install Docker Desktop.
 
-Related open source: [db-agent](https://github.com/db-agent/db-agent) — text-to-SQL AI agent with cross-platform memory, S3 Vectors, and knowledge files (AAAI-25 workshop project).
+```bash
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 
-### Full-Stack on AWS: 7-chapter curriculum
+cp .env.example .env             # once; .env is gitignored
+docker compose up -d --wait      # starts Postgres, waits until it is ready
+python -m scripts.seed           # optional: five demo accounts
 
-| Chapter | Topic                                                  |
-| ------- | ------------------------------------------------------ |
-| 01      | Vibe Coding: FastAPI app with AI prompting             |
-| 02      | Backend & Databases: CRUD API + MongoDB                |
-| 03      | Testing: TDD cycle with AI assistance                  |
-| 04      | Security: API key auth + JWT                           |
-| 05      | Infrastructure: Terraform on AWS                       |
-| 06      | Cloud & CI/CD: Lambda, API Gateway, S3, GitHub Actions |
-| 07      | React: frontend, components, full-stack integration    |
+uvicorn app.main:app --reload
+```
 
-4 deployable projects: Task Tracker · Notice Board · URL Bookmark Saver · Architecture Diagram
+Then open http://127.0.0.1:8000/docs, the interactive OpenAPI page is our
+front end for this phase. `GET /health` should return `{"status": "ok"}`, and
+`GET /health/db` tells you whether the database is actually reachable.
+Tables are created automatically on startup from `app/tables.py`.
 
----
+**After every pull, restart the app.** Tables get created automatically, but
+only new ones — if a teammate changed an existing column you get a confusing
+error rather than a clear one, and someone needs to run the ALTER by hand.
 
-### AWS Data Lake: 6-lab curriculum
+### Everyday Docker
 
-Labs 1-3 build on each other. Labs 4-6 are standalone.
+```bash
+docker compose ps                # status; you want "Up (healthy)"
+docker compose logs -f db        # follow the logs
+docker compose exec db psql -U banking -d banking    # a psql shell
+docker compose down              # stop, keep the data
+docker compose down -v           # stop and wipe the data volume
+pytest                           # 72 tests; needs Postgres running
+```
 
-| Lab   | Topic                                                                       |
-| ----- | --------------------------------------------------------------------------- |
-| Lab 1 | S3, Glue Crawler, Glue ETL (PySpark), Athena                                |
-| Lab 2 | Event-driven ingestion: S3 to SQS to Lambda                                 |
-| Lab 3 | Data governance: Lake Formation row/column/tag-based access control         |
-| Lab 4 | Redshift Serverless, federated query from Aurora RDS                        |
-| Lab 5 | Change Data Capture: Oracle/Postgres to DMS to S3 or Oracle/Postgres target |
-| Lab 6 | OpenSearch: ingestion, search, and dashboards                               |
+## Layout
 
----
+| File | What lives there |
+|---|---|
+| `app/main.py` | App setup. Every router is already registered, so you should not need to edit this. |
+| `app/config.py` | Settings from `.env`. `DATABASE_URL` lives here and nowhere else. |
+| `app/db.py` | Engine, the per-request session, and the transaction primitive. |
+| `app/tables.py` | SQLAlchemy tables: the database's shape. |
+| `app/errors.py` | Shared error types and the single error response shape. |
+| `app/core/store.py` | The account + ledger store, backed by Postgres. Go through these functions, never raw SQL in a router. |
+| `app/core/transfer_rules.py` | Pure transfer validation (active account, same currency, sufficient funds); no I/O. |
+| `app/core/security.py` | Password hashing/verification for auth. |
+| `app/repositories/account_repository.py` | Account reads/writes, wrapping `core/store.py`. |
+| `app/repositories/transaction_repository.py` | Ledger reads/writes, wrapping `core/store.py`. |
+| `app/repositories/user_repository.py` | Registered-user records, in the `users` table. |
+| `app/services/transfer_service.py` | Business logic for `/transfers`. |
+| `app/services/transaction_service.py` | Business logic for deposit / withdraw. |
+| `app/services/auth_service.py` | Business logic for register/login. |
+| `app/services/account_service.py` | Account business logic. **Written but not wired to the router yet.** |
+| `app/schemas/primitives.py` | Shared value types (`Money`, `AccountNumber`, `Currency`, `PositiveMoney`). |
+| `app/schemas/account_schema.py` | Account request/response shapes. |
+| `app/schemas/transaction_schema.py` | `MoneyMovement` request shape, ledger entry shape. |
+| `app/schemas/transfer_schema.py` | Transfer request/response shapes. |
+| `app/schemas/auth_schema.py` | Register/login request, user profile response. |
+| `app/routers/accounts.py` | Create / fetch / list / change status / delete accounts. |
+| `app/routers/auth.py` | Register / login. |
+| `app/routers/transactions.py` | Deposit / withdraw. |
+| `app/routers/transfers.py` | Transfer funds between two accounts. Reference implementation for the layering. |
+| `app/routers/queries.py` | List, filter, page, sort accounts. **Unclaimed, still a stub.** |
+| `app/routers/statements.py` | Transaction history and statements. **Unclaimed, still a stub.** |
+| `scripts/seed.py` | The five demo accounts. Idempotent. |
 
-## About
+## Conventions
 
-[BeCloudReady](https://becloudready.com) is a Databricks Registered Partner that builds and delivers cloud workshops for engineering teams. We run community workshops at [TorontoAI](https://toronto-ai.org) (10K+ members).
+These are the things that cut across everyone's work, so they are not up for
+per-file interpretation:
 
-|                             |                                                                                                              |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Cloud Workshops**         | Per-student AWS / Azure / GCP / Databricks sandboxes, region-locked, namespace-scoped, teardown-clean        |
-| **AI & GPU Labs**           | H100 / A100 cohorts on neo-cloud (Lambda Labs, Shadeform, RunPod): 30-70% cheaper than hyperscaler on-demand |
-| **Sales Demo Environments** | Reproducible demo stacks for SE teams and partner programs                                                   |
+- **`BankingApp.json` is the contract.** Changing a field means changing the
+  schema in the same PR.
+- **Money is `Decimal`, never `float`.** Floats lose cents. Use the shared
+  `Money`/`PositiveMoney` types from `app/schemas/primitives.py` instead of
+  redeclaring the constraint. `balance` and `amount` are `NUMERIC(18,2)` and
+  the database rejects anything else.
+- **One error shape.** Raise the classes in `app/errors.py`; do not raise
+  `HTTPException` directly and do not invent a new response body.
+- **Reach the store through its functions**, and wrap any read-modify-write
+  sequence in `with store.transaction():`.
+- **Every movement of money writes a ledger entry**, in the same
+  `store.transaction()` block that changes the balance. The ledger is
+  append-only: corrections are new entries, never edits.
+- **Keep the layering.** A router calls a service; a service calls
+  repositories and core rules; a repository is the only thing that touches
+  `core/store.py`. `accounts.py` still calls the store directly; fixing that
+  is open work, not a reason to add more code that skips the layers.
 
-**Need a workshop for your team?**
-→ [becloudready.com/workshops](https://becloudready.com/workshops) · [Book a call](https://calendly.com/kchandank/30-mins-meeting)
+## Working with the database
 
----
+Nothing about how you write a router changed when Postgres landed. `store.get()`
+still returns a `BankAccount`, `store.put()` still writes one back, and
+`store.transaction()` still wraps a read-modify-write. Two things are better:
 
-## Tagging standard
+- **`transaction()` really rolls back.** It used to be a mutex, which stopped
+  two requests interleaving but could not undo a change once made. If your
+  handler raises halfway through, the whole block reverts.
+- **`get()` inside a `transaction()` block locks the row** (`SELECT ... FOR
+  UPDATE`) until the block ends. That is what stops two concurrent withdrawals
+  from both passing the same balance check.
 
-Every resource created in a workshop must carry these tags. The nightly cleanup workflow reads them to decide what to delete.
+If you are about to write to **two** accounts, take them together with
+`store.get_many_for_update([a, b])` rather than two `get()` calls. It sorts
+before locking; locking in request order lets A→B and B→A deadlock, and
+Postgres resolves that by killing one of them.
 
-| Tag          | Example          | Purpose                              |
-| ------------ | ---------------- | ------------------------------------ |
-| `workshop`   | `aws-data-lake`  | Which lab                            |
-| `date`       | `dd-mmm-yyy`     | When the cohort ran 26-Jul-2026      |
-| `autodelete` | `true` (default) | Set to `false` to protect a resource |
+**Writing real queries.** `store.list_all()` returns every account. For
+filtering, sorting and paging (the queries and statements slices) do it in SQL:
 
-All Terraform modules in this repo apply these tags via `local.common_tags`. Resources created manually (via console or CLI) must be tagged manually.
+```python
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-**To protect a resource from nightly deletion**, add `AutoDelete = false`. Everything else tagged `Environment = workshop` is deleted at 3 AM EST.
+from app.db import get_session
+from app.sql_schemas.tables import AccountRow
 
-See [`terraform/tags.tf`](terraform/tags.tf) for the shared locals block and [`tools/nightly-cleanup.py`](tools/nightly-cleanup.py) for the cleanup logic.
+@router.get("/accounts")
+def list_accounts(status: str | None = None, db: Session = Depends(get_session)):
+    stmt = select(AccountRow).order_by(AccountRow.account_number).limit(50)
+    if status:
+        stmt = stmt.where(AccountRow.status == status)
+    return [... for row in db.scalars(stmt)]
+```
 
----
+**Changing the schema.** Edit `app/tables.py`. A brand-new table just appears
+next time the app (or `pytest`) starts — `db.init_db()` calls
+`Base.metadata.create_all()`, which only creates tables that do not exist yet.
 
-## Contributing
+**Altering an existing table** (new column, changed type, dropped constraint)
+needs a manual `ALTER` run against the database yourself — `create_all()` will
+not touch a table that already exists. Say so in the group chat so everyone
+running against the shared table applies the same change, and note it in the
+PR that changed `tables.py`.
 
-Found a bug or a gap in a published lab? Issues and PRs are welcome.
-Have a lab that fits one of the tracks above? Reach out before opening a PR.
+## Working together
 
-## License
+`feat/db-foundation` is the integration branch. Branch off it, one branch per
+slice, and PR back into it when your slice is done:
 
-Apache License 2.0. See [`LICENSE`](LICENSE).
+```bash
+git fetch upstream
+git checkout -b feat/<slice> upstream/feat/db-foundation
+```
+
+**Do not branch off `api_endpoint_test`.** It predates the database — no
+`app/db.py`, no `app/tables.py`, no `docker-compose.yml` — so a slice built on
+it cannot be merged back without being rewritten.
+
+Once people are branched off a shared moving branch, a few things start to
+matter that did not before:
+
+- **Never force-push `feat/db-foundation`.** Everyone is branched off it, and
+  rewriting its history breaks all of them at once. Corrections go on top as
+  new commits.
+- **Merge it into your slice regularly**, not just at the end. A week of drift
+  is a bad afternoon.
+- **Restart the app after every pull or merge**, not only after cloning. New
+  tables pick themselves up; a changed column on an existing table needs the
+  ALTER run by hand, or you get a confusing "column does not exist" instead.
+
+Each person owns one file under `app/routers/`. Shared files (`app/main.py`,
+`app/errors.py`, `app/db.py`, `app/tables.py`, `app/config.py`,
+`app/core/store.py`, the `app/schemas/` and `app/repositories/` modules) are
+stable; if you need to change one, say so in the group first, because everyone
+else is building on it.
